@@ -22,6 +22,10 @@ Get Healer Potion during Entire Raid
 
 ### Usage 1:
 ```sh
+# Windows
+set WCL_CLIENT_TOKEN=your_wcl_api_v2_client_id_and_secrect_base64_string
+# Linux/Unix
+export WCL_CLIENT_TOKEN=your_wcl_api_v2_client_id_and_secrect_base64_string
 # invoke py directly with -l and your wcl fight report link
 python elapse_wcl_analyzer.py -l https://cn.classic.warcraftlogs.com/reports/rwG81bzxZvg3mDN9
 ```
