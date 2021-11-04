@@ -8,6 +8,9 @@ from python_graphql_client import GraphqlClient
 TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token'
 WCLV2_URL = "https://www.warcraftlogs.com/api/v2/client"
 
+IGNORE_ENCOUNTERS = ['Morogrim Tidewalker']
+IGNORE_PLAYERS = ['鲁德彪','慕蔺']
+
 def _get_token(auth64str: str) -> str:
     if not auth64str:
         key = 'WCL_CLIENT_TOKEN'
@@ -122,23 +125,26 @@ if __name__ == '__main__':
     for i in kills_fights_id_list:
         kills_fights_id_arr.append(i['id'])
     for r in all_rankings_list:
+        if r['encounter']['name'] in IGNORE_ENCOUNTERS:
+            continue
         if r['fightID'] in kills_fights_id_arr:
             boss = r['encounter']['name']
             dps_list = r['roles']['dps']['characters']
             boss_name.append(boss)
             boss_dps_list = list()
             for d in dps_list:
-                player_name = d['name']
-                player_class = d['class']
-                player_parse = d['rankPercent']
-                player_bracket = d['bracketPercent']
-                player_dict = dict()
-                player_dict['name'] = player_name
-                dps_players.append(player_name)
-                player_dict['class'] = player_class
-                player_dict['parse'] = player_parse
-                player_dict['bracket'] = player_bracket
-                boss_dps_list.append(player_dict)
+                if d['name'] not in IGNORE_PLAYERS:
+                    player_name = d['name']
+                    player_class = d['class']
+                    player_parse = d['rankPercent']
+                    player_bracket = d['bracketPercent']
+                    player_dict = dict()
+                    player_dict['name'] = player_name
+                    dps_players.append(player_name)
+                    player_dict['class'] = player_class
+                    player_dict['parse'] = player_parse
+                    player_dict['bracket'] = player_bracket
+                    boss_dps_list.append(player_dict)
             elapse_ranking[boss]=boss_dps_list
     
     #print(json.dumps(elapse_ranking))
@@ -217,6 +223,7 @@ if __name__ == '__main__':
     elapse_mean = elapse_total / len(boss_name)
     encounter_mean_dict['mean'] = elapse_mean
     elapse_score.append(encounter_mean_dict)
+
     df = pd.DataFrame(elapse_score) 
     
     # saving the dataframe 
@@ -261,13 +268,6 @@ if __name__ == '__main__':
     #         print("|-{} {}".format(p,score))
 
             
-
-    #print(score)
-
-    # 4.1 Print CSV
-    # with open('boss_dps_ranking.csv', 'w') as f: 
-    #     w = csv.writer(f)
-    #     w.writerow(elapse_ranking)
 
 
 
