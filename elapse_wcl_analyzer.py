@@ -2,6 +2,7 @@ import requests
 import json
 import os, sys, getopt
 import csv
+import pandas as pd  
 from python_graphql_client import GraphqlClient
 
 TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token'
@@ -162,8 +163,12 @@ if __name__ == '__main__':
     # |-Void Reaver 191
     # |-High Astromancer Solarian 141
     # |-Kael'thas Sunstrider 164
+    elapse_score = list()
     for p in dps_players_global:
-        print(p)
+        p_score_dict = dict()
+        p_score_dict['name'] = p
+        participants_count = 0
+        participants_sum_prase = 0
         for encounter, dps_player_list in elapse_ranking.items():
             dps_participants = list()
             for dps in dps_player_list:
@@ -173,11 +178,49 @@ if __name__ == '__main__':
                     if p == pp['name']:
                         parse = pp['parse']
                         bracket = pp['bracket']
+                        pclass = pp['class']
+                p_score_dict['class'] = pclass
                 score = parse + bracket
+                participants_sum_prase = participants_sum_prase + score
+                participants_count = participants_count + 1
             else:
                 score = 0
+            p_score_dict[encounter] = score
+        p_score_dict['mean'] = participants_sum_prase / participants_count
+        elapse_score.append(p_score_dict)
+    #print(elapse_score)
             # print("|-{} {}".format(encounter,score))
 
+    # Reuse style 2 for mean score per encounter
+    encounter_mean_dict = dict()
+    encounter_mean_dict['name'] = 'Total'
+    encounter_mean_dict['class'] = 'dps'
+    elapse_total = 0
+    for encounter, dps_player_list in elapse_ranking.items():
+        #print(encounter)
+        dps_participants = list()
+        encounter_total_score = 0
+        for dps in dps_player_list:
+            dps_participants.append(dps['name'])
+        for p in dps_players_global:
+            if p in dps_participants:
+                for pp in dps_player_list:
+                    if p == pp['name']:
+                        parse = pp['parse']
+                        bracket = pp['bracket']
+                score = parse + bracket
+                encounter_total_score = encounter_total_score + score
+        encounter_mean = encounter_total_score / len(dps_participants)
+        elapse_total = elapse_total + encounter_mean
+        encounter_mean_dict[encounter] = encounter_mean
+            #print("|-{} {}".format(p,score))
+    elapse_mean = elapse_total / len(boss_name)
+    encounter_mean_dict['mean'] = elapse_mean
+    elapse_score.append(encounter_mean_dict)
+    df = pd.DataFrame(elapse_score) 
+    
+    # saving the dataframe 
+    df.to_csv('elapse_score.csv', encoding='utf_8_sig') 
 
     # Style 2 Encounter per player
     # Kael'thas Sunstrider
