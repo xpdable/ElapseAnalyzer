@@ -1,8 +1,11 @@
+#coding=utf-8
+
 import requests
 import json
 import os, sys, getopt
 import csv
-import pandas as pd  
+import pandas as pd
+from requests import NullHandler, models  
 from python_graphql_client import GraphqlClient
 
 TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token'
@@ -11,7 +14,20 @@ WCLV2_URL = "https://www.warcraftlogs.com/api/v2/client"
 IGNORE_ENCOUNTERS = ['Morogrim Tidewalker']
 IGNORE_PLAYERS = ['鲁德彪','慕蔺']
 
-def _get_token(auth64str: str) -> str:
+GL_ALL_FIGHTS_LIST = list()
+GL_ALL_KILLS_LIST = list()
+GL_ALL_RANKING_LIST = list()
+
+GL_FIGHT_DPS_LIST = list()
+GL_ALL_DPS_LIST = list()
+GL_HEALER_LIST = list()
+GL_PLAYER_ACTOR_MAP = dict()
+
+DPS_POTION_CHECK = []
+HEALER_POTION_CHECK = []
+
+
+def _get_token(auth64str:str) -> str:
     if not auth64str:
         key = 'WCL_CLIENT_TOKEN'
         base64authstr = os.getenv(key)
@@ -37,30 +53,7 @@ def gql_client(bearer_token:str) -> GraphqlClient:
     }
     return GraphqlClient(endpoint=WCLV2_URL, headers=qheader)
 
-
-if __name__ == '__main__':
-
-    # Get Single Report
-    # Option 1 - via report link https://cn.classic.warcraftlogs.com/reports/rwG81bzxZvg3mDN9 or the code rwG81bzxZvg3mDN9 
-    # TODO Option 2 - via guild code and report title
-
-    inputopts, args = getopt.getopt(sys.argv[1:],"h:l:gt")
-    for o, val in inputopts:
-        if o == '-h':
-            print("help") #TODO
-        elif o == '-l':
-            wcl_report_link=val
-        elif o == '-t':
-            wcl_report_title=val
-        elif o == '-g':
-            wcl_guild_name=val	
-        else:
-            print("wrong args")
-
-    if not wcl_report_link:
-        #TODO option2 find report by guild name and title
-        print("TODO")
-
+def get_raid_fight(wcl_report_link: str) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
 
@@ -91,12 +84,24 @@ if __name__ == '__main__':
     # {'data': {'reportData': {'report': {'fights': []
     # print(all_fights_data)
     all_fights_list = all_fights_data['data']['reportData']['report']['fights']
+    
     kills_fights_id_list = list()
     # 3.1 Select Fights
     for f in all_fights_list:
         if f['kill'] is True:
             kills_fights_id_list.append(f)
     #print(kills_fights_id_list)
+
+    #Set for global use
+    global GL_ALL_FIGHTS_LIST
+    global GL_ALL_KILLS_LIST
+    GL_ALL_FIGHTS_LIST = all_fights_list
+    GL_ALL_KILLS_LIST = kills_fights_id_list
+
+def get_rankings(wcl_report_link: str) -> None:
+    # Repor ID: e.g. rwG81bzxZvg3mDN9 
+    report_code = wcl_report_link.split('/')[-1]
+    client = gql_client(_get_token(None))
 
     # Step 4 - Get Player Fight Ranks
     rankings_query="""
@@ -112,16 +117,26 @@ if __name__ == '__main__':
     all_rankings_data = client.execute(query=rankings_query)
     # {'data': {'reportData': {'report': {'rankings': json
     all_rankings_list = all_rankings_data['data']['reportData']['report']['rankings']['data']
+    global GL_ALL_RANKING_LIST
+    GL_ALL_RANKING_LIST = all_rankings_list
     #print(all_rankings_json)
+
+def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
+    # Repor ID: e.g. rwG81bzxZvg3mDN9 
+    report_code = wcl_report_link.split('/')[-1]
+    client = gql_client(_get_token(None))
 
     #DPS Ranks model
     # [{boss1:[{name:player1,class:pal,parse:87,item:66},{name:player1,class:pal,parse:87,item:66}]},...]
     elapse_ranking = dict()
 
+    all_rankings_list = GL_ALL_RANKING_LIST
+
     #Get DPS fights ranks
     kills_fights_id_arr = list()
     dps_players = list()
     boss_name = list()
+    kills_fights_id_list = GL_ALL_KILLS_LIST
     for i in kills_fights_id_list:
         kills_fights_id_arr.append(i['id'])
     for r in all_rankings_list:
@@ -155,6 +170,8 @@ if __name__ == '__main__':
     #                       boss-avg  b-avg        benchmark-avg
     # if player does not show in bossX, use 0
     dps_players_global = list(set(dps_players))
+    global GL_FIGHT_DPS_LIST
+    GL_FIGHT_DPS_LIST = dps_players_global
     boss_name = list(set(boss_name))
 
     # Style 1 Player per Encounters
@@ -267,16 +284,188 @@ if __name__ == '__main__':
     #             score = 0
     #         print("|-{} {}".format(p,score))
 
+def get_raid_actor(wcl_report_link: str) -> None:
+    # Repor ID: e.g. rwG81bzxZvg3mDN9 
+    report_code = wcl_report_link.split('/')[-1]
+    client = gql_client(_get_token(None))
+
+    # Step 4 - Get Player Fight Ranks
+    actor_query="""
+        query {
+            reportData {
+                report(code: "%s") {
+                    masterData{
+                        actors(type:"Player"){
+                            name
+                            id
+                        }
+                    }
+                }
+            }
+        }
+    """%report_code
+    all_actor_data = client.execute(query=actor_query)
+    actor_list = all_actor_data['data']['reportData']['report']['masterData']['actors']
+    
+    player_list = list()
+    healer_list = list()
+    dps_list = list()
+    tank_list = list()
+    #Parse Raid Tank & Healer
+    for r in GL_ALL_RANKING_LIST:
+        r_dps_list = r['roles']['dps']['characters']
+        r_tank_list = r['roles']['tanks']['characters']
+        r_healer_list = r['roles']['healers']['characters']
+        for t in r_tank_list:
+            if t['name'] not in IGNORE_PLAYERS:
+                player_name = t['name']
+                tank_list.append(player_name)
+        for h in r_healer_list:
+            if h['name'] not in IGNORE_PLAYERS:
+                player_name = h['name']
+                healer_list.append(player_name)
+        for d in r_dps_list:
+            if d['name'] not in IGNORE_PLAYERS:
+                player_name = d['name']
+                dps_list.append(player_name)
+
+    player_list = healer_list+dps_list+tank_list
+    player_list = list(set(player_list))
+    global GL_ALL_DPS_LIST
+    global GL_HEALER_LIST
+    GL_ALL_DPS_LIST = list(set(dps_list))
+    GL_HEALER_LIST = list(set(healer_list))
+
+    global GL_PLAYER_ACTOR_MAP
+    for p in player_list:
+        for n in actor_list:
+            if str(p) == str(n['name']):
+                GL_PLAYER_ACTOR_MAP[p]=n['id']
+   
+def get_dps_fight_potion(wcl_report_link: str) -> None:
+    # Repor ID: e.g. rwG81bzxZvg3mDN9 
+    report_code = wcl_report_link.split('/')[-1]
+    client = gql_client(_get_token(None))
+    # Prepare:
+    # DPS Player List encounters only - GL_DPS_LIST 
+    # Potions in count - DPS_POTION_CHECK
+    # FightID with startTime and endTime in GL_ALL_KILLS_LIST
+    if not GL_ALL_KILLS_LIST:
+        return
+    if not GL_FIGHT_DPS_LIST:
+        return
+    
+    # Output model
+    # {
+    #     player1: [{name:encounter1, mana:5, haste:2, ...},{name:encounter2, mana:2, haste:1}...],
+    #     player2: [],
+    #     ...
+    # }
+
+    # query model for single player
+    # 0) Find player actorID in gameMasterData
+    # 1) query player P as sourceID(actoerID) in fightID x (startTime->endTime), dataType:Casts in events.
+    # 2) if nextPageTimestamp != null, loop 1) with startTime again till not nextPageTimestamp
+    # query {
+	# reportData {
+	# 	report(code: "rwG81bzxZvg3mDN9") {
+    #         events(
+    #             startTime:14089632,
+    #             endTime:14920070,
+    #             dataType:Casts,
+    #             useActorIDs:false,
+    #             sourceID:23){
+    #             nextPageTimestamp
+    #             data
+    #             }
+    #         }
+    #     }
+    # }
+    for p in GL_FIGHT_DPS_LIST:
+        for f in GL_ALL_KILLS_LIST:
+            sourceID = GL_PLAYER_ACTOR_MAP[p]
+            start = f['startTime']
+            end = f['endTime']
+            cast_list = _get_player_cast(report_code,start,end,sourceID)
+            print(cast_list)
             
 
 
+def _get_player_cast(report_code:str, start:float, end:float, actorID:int) -> list:
+    player_cast_list = list()
+    client = gql_client(_get_token(None))
+    nextPageTimestamp = start
+    while not nextPageTimestamp:
+        dps_fight_casts_query = """
+            query {
+                reportData {
+                    report(code: "%(code)s") {
+                        events(
+                            startTime:%(start)s,
+                            endTime:%(end)s,
+                            dataType:Casts,
+                            useActorIDs:false,
+                            sourceID:%(actor)s)
+                        {
+                            nextPageTimestamp
+                            data
+                        }
+                    }
+                }
+            }
+        """%{"code":report_code, "start":nextPageTimestamp, "end":end, "actor":actorID}
+        player_cast = client.execute(query=dps_fight_casts_query)
+        print(player_cast)
+        cast_data = player_cast['data']['reportData']['report']['events']['data']
+        player_cast_list.append(cast_data)
+        nextPageTimestamp = player_cast['data']['reportData']['report']['events']['nextPageTimestamp']
+    return player_cast_list
 
 
 
 
 
 
-# Synchronous request
+
+    
+
+
+
+
+if __name__ == '__main__':
+
+    # Get Single Report
+    # Option 1 - via report link https://cn.classic.warcraftlogs.com/reports/rwG81bzxZvg3mDN9 or the code rwG81bzxZvg3mDN9 
+    # TODO Option 2 - via guild code and report title
+
+    inputopts, args = getopt.getopt(sys.argv[1:],"h:l:gt")
+    for o, val in inputopts:
+        if o == '-h':
+            print("help") #TODO
+        elif o == '-l':
+            wcl_report_link=val
+        elif o == '-t':
+            wcl_report_title=val
+        elif o == '-g':
+            wcl_guild_name=val	
+        else:
+            print("wrong args")
+
+    if not wcl_report_link:
+        #TODO option2 find report by guild name and title
+        print("TODO")
+    
+    # Prepare:
+    get_raid_fight(wcl_report_link)
+    get_rankings(wcl_report_link)
+    get_raid_actor(wcl_report_link)
+
+    # Usage 1 - Parse + Bracket
+    get_dps_parse_and_bracket(wcl_report_link)
+
+    # Usage 2 - DPS Player Potion in all encounter fights
+    
+    get_dps_fight_potion(wcl_report_link)
 
 
 # Step 5 - Get Player Fight Potion
