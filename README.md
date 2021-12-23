@@ -4,7 +4,7 @@ Simple WCL Analyzer for fight report
 ### Scenario 1
 Calculate parse% + bracket% Per DPS Character Per Encounter
 
-### [TODO]Scenario 2
+### Scenario 2
 
 Calculate DPS Character Fight Potion
 
@@ -32,7 +32,8 @@ python elapse_wcl_analyzer.py -l https://cn.classic.warcraftlogs.com/reports/rwG
 
 Output:
 `elapse_score.csv`
-
+`elapse_dps_potion.csv`
+//TODO 下次会更新 命令行 -opt potion / dps / healer 选项和输出 csv filename 参数
 
 ### [TODO]Usage 2:
 ```sh

@@ -12,19 +12,50 @@ TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token'
 WCLV2_URL = "https://www.warcraftlogs.com/api/v2/client"
 
 IGNORE_ENCOUNTERS = ['Morogrim Tidewalker']
-IGNORE_PLAYERS = ['鲁德彪','慕蔺']
+IGNORE_PLAYERS = []
 
 GL_ALL_FIGHTS_LIST = list()
 GL_ALL_KILLS_LIST = list()
 GL_ALL_RANKING_LIST = list()
-
+GL_ELAPSE_FIGHT_RANKING = list()
 GL_FIGHT_DPS_LIST = list()
 GL_ALL_DPS_LIST = list()
 GL_HEALER_LIST = list()
 GL_PLAYER_ACTOR_MAP = dict()
+GL_DPS_CATALOG = {
+    'melee':[
+        {'Paladin':'Retribution'},
+        {'Rogue':'*'},
+        {'Shaman':'Enhancement'},
+        {'Warrior':'*'}
+    ], 
+    'range':[
+        {'Shaman':'Elemental'},
+        {'Priest':'Shadow'},
+        {'Mage':'*'},
+        {'Druid':'Balance'},
+        {'Warlock':'*'}
+    ], 
+    'range-melee':[
+        {'Hunter':'*'}
+    ]
+    }
 
-DPS_POTION_CHECK = []
-HEALER_POTION_CHECK = []
+# 加速，毁灭，风暴大蓝，水库大蓝，大蓝
+DPS_POTION_CHECK = {
+                        28507:"加速",
+                        28508:"毁灭",
+                        41617:"恢复法力",
+                        41618:"恢复法力",
+                        28499:"恢复法力",
+                        28494:"疯狂力量"
+                    }
+# 风暴大蓝，水库大蓝，大蓝
+HEALER_POTION_CHECK = {
+                        41617:"恢复法力",
+                        41618:"恢复法力",
+                        28499:"恢复法力"
+                    }
 
 
 def _get_token(auth64str:str) -> str:
@@ -53,11 +84,9 @@ def gql_client(bearer_token:str) -> GraphqlClient:
     }
     return GraphqlClient(endpoint=WCLV2_URL, headers=qheader)
 
-def get_raid_fight(wcl_report_link: str) -> None:
+def get_raid_fight(wcl_report_link: str, client: GraphqlClient) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
-
-    client = gql_client(_get_token(None))
 
     # Step 3 - Get Fights
     # Get Report All Fights
@@ -98,10 +127,9 @@ def get_raid_fight(wcl_report_link: str) -> None:
     GL_ALL_FIGHTS_LIST = all_fights_list
     GL_ALL_KILLS_LIST = kills_fights_id_list
 
-def get_rankings(wcl_report_link: str) -> None:
+def get_rankings(wcl_report_link: str, client: GraphqlClient) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
-    client = gql_client(_get_token(None))
 
     # Step 4 - Get Player Fight Ranks
     rankings_query="""
@@ -121,10 +149,9 @@ def get_rankings(wcl_report_link: str) -> None:
     GL_ALL_RANKING_LIST = all_rankings_list
     #print(all_rankings_json)
 
-def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
+def get_dps_parse_and_bracket(wcl_report_link: str, client: GraphqlClient) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
-    client = gql_client(_get_token(None))
 
     #DPS Ranks model
     # [{boss1:[{name:player1,class:pal,parse:87,item:66},{name:player1,class:pal,parse:87,item:66}]},...]
@@ -135,6 +162,7 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
     #Get DPS fights ranks
     kills_fights_id_arr = list()
     dps_players = list()
+    fight_dps_player_with_class = dict()
     boss_name = list()
     kills_fights_id_list = GL_ALL_KILLS_LIST
     for i in kills_fights_id_list:
@@ -147,19 +175,23 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
             dps_list = r['roles']['dps']['characters']
             boss_name.append(boss)
             boss_dps_list = list()
+            fight_dps_player_list = list()
             for d in dps_list:
                 if d['name'] not in IGNORE_PLAYERS:
                     player_name = d['name']
                     player_class = d['class']
                     player_parse = d['rankPercent']
                     player_bracket = d['bracketPercent']
+                    player_spec = d['spec']
                     player_dict = dict()
                     player_dict['name'] = player_name
                     dps_players.append(player_name)
+                    fight_dps_player_list.append({player_name:"{}|{}".format(player_class,player_spec)})
                     player_dict['class'] = player_class
                     player_dict['parse'] = player_parse
                     player_dict['bracket'] = player_bracket
                     boss_dps_list.append(player_dict)
+            fight_dps_player_with_class[boss] = fight_dps_player_list
             elapse_ranking[boss]=boss_dps_list
     
     #print(json.dumps(elapse_ranking))
@@ -173,6 +205,9 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
     global GL_FIGHT_DPS_LIST
     GL_FIGHT_DPS_LIST = dps_players_global
     boss_name = list(set(boss_name))
+
+    global GL_DPS_PLAYER_WITH_CLASS
+    GL_DPS_PLAYER_WITH_CLASS = fight_dps_player_with_class 
 
     # Style 1 Player per Encounters
     # 止戈之战
@@ -191,7 +226,9 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
         p_score_dict = dict()
         p_score_dict['name'] = p
         participants_count = 0
+        participants_sum_score = 0
         participants_sum_prase = 0
+        participants_sum_bracket = 0
         for encounter, dps_player_list in elapse_ranking.items():
             dps_participants = list()
             for dps in dps_player_list:
@@ -204,12 +241,20 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
                         pclass = pp['class']
                 p_score_dict['class'] = pclass
                 score = parse + bracket
-                participants_sum_prase = participants_sum_prase + score
+                participants_sum_score = participants_sum_score + score
+                participants_sum_prase = participants_sum_prase + parse
+                participants_sum_bracket = participants_sum_bracket + bracket
                 participants_count = participants_count + 1
             else:
                 score = 0
+                parse = 0
+                bracket = 0
+            p_score_dict["{}-parse".format(encounter)] = parse
+            p_score_dict["{}-bracket".format(encounter)] = bracket
             p_score_dict[encounter] = score
-        p_score_dict['mean'] = participants_sum_prase / participants_count
+        p_score_dict['mean-parse'] = participants_sum_prase / participants_count
+        p_score_dict['mean-bracket'] = participants_sum_bracket / participants_count
+        p_score_dict['mean'] = participants_sum_score / participants_count
         elapse_score.append(p_score_dict)
     #print(elapse_score)
             # print("|-{} {}".format(encounter,score))
@@ -218,11 +263,15 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
     encounter_mean_dict = dict()
     encounter_mean_dict['name'] = 'Total'
     encounter_mean_dict['class'] = 'dps'
-    elapse_total = 0
+    elapse_total_score = 0
+    elapse_total_parse = 0
+    elapse_total_bracket = 0
     for encounter, dps_player_list in elapse_ranking.items():
         #print(encounter)
         dps_participants = list()
         encounter_total_score = 0
+        encounter_total_parse = 0
+        encounter_total_bracket = 0
         for dps in dps_player_list:
             dps_participants.append(dps['name'])
         for p in dps_players_global:
@@ -233,12 +282,26 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
                         bracket = pp['bracket']
                 score = parse + bracket
                 encounter_total_score = encounter_total_score + score
+                encounter_total_parse = encounter_total_parse + parse
+                encounter_total_bracket = encounter_total_bracket + bracket
         encounter_mean = encounter_total_score / len(dps_participants)
-        elapse_total = elapse_total + encounter_mean
+        encounter_mean_parse = encounter_total_parse / len(dps_participants)
+        encounter_mean_bracket = encounter_total_bracket / len(dps_participants)
+
+        elapse_total_score = elapse_total_score + encounter_mean
+        elapse_total_parse = elapse_total_parse + encounter_mean_parse
+        elapse_total_bracket = elapse_total_bracket + encounter_mean_bracket
         encounter_mean_dict[encounter] = encounter_mean
+        encounter_mean_dict["{}-parse".format(encounter)] = encounter_mean_parse
+        encounter_mean_dict["{}-bracket".format(encounter)] = encounter_mean_bracket
             #print("|-{} {}".format(p,score))
-    elapse_mean = elapse_total / len(boss_name)
+    elapse_mean = elapse_total_score / len(boss_name)
+    elapse_mean_parse = elapse_total_parse / len(boss_name)
+    elapse_mean_bracket = elapse_total_bracket / len(boss_name)
     encounter_mean_dict['mean'] = elapse_mean
+    encounter_mean_dict['mean-parse'] = elapse_mean_parse
+    encounter_mean_dict['mean-bracket'] = elapse_mean_bracket
+
     elapse_score.append(encounter_mean_dict)
 
     df = pd.DataFrame(elapse_score) 
@@ -284,10 +347,9 @@ def get_dps_parse_and_bracket(wcl_report_link: str) -> None:
     #             score = 0
     #         print("|-{} {}".format(p,score))
 
-def get_raid_actor(wcl_report_link: str) -> None:
+def get_raid_actor(wcl_report_link: str, client: GraphqlClient) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
-    client = gql_client(_get_token(None))
 
     # Step 4 - Get Player Fight Ranks
     actor_query="""
@@ -342,10 +404,9 @@ def get_raid_actor(wcl_report_link: str) -> None:
             if str(p) == str(n['name']):
                 GL_PLAYER_ACTOR_MAP[p]=n['id']
    
-def get_dps_fight_potion(wcl_report_link: str) -> None:
+def get_dps_fight_potion(wcl_report_link: str, client: GraphqlClient) -> None:
     # Repor ID: e.g. rwG81bzxZvg3mDN9 
     report_code = wcl_report_link.split('/')[-1]
-    client = gql_client(_get_token(None))
     # Prepare:
     # DPS Player List encounters only - GL_DPS_LIST 
     # Potions in count - DPS_POTION_CHECK
@@ -381,21 +442,50 @@ def get_dps_fight_potion(wcl_report_link: str) -> None:
     #         }
     #     }
     # }
+    dps_potion_list = list()
     for p in GL_FIGHT_DPS_LIST:
+        player_potion_dict = dict()
+        player_potion_dict['name'] = p
         for f in GL_ALL_KILLS_LIST:
-            sourceID = GL_PLAYER_ACTOR_MAP[p]
-            start = f['startTime']
-            end = f['endTime']
-            cast_list = _get_player_cast(report_code,start,end,sourceID)
-            print(cast_list)
-            
+            player_fight_potion_dict = dict()
+            player_fight_potion_dict[f['name']] = list()
+            aggregate_d = dict()
+            for a_id,a_name in DPS_POTION_CHECK.items():
+                aggregate_d[a_name] = 0 
+                aggregate_l = list()
+                aggregate_dist = list()
+                sourceID = GL_PLAYER_ACTOR_MAP[p]
+                start = f['startTime']
+                end = f['endTime']
+                cast_list = _get_player_cast(report_code, int(start), int(end), sourceID, a_id, client)
+                # print("{} - {}".format(p , f['name']))
+                if cast_list:
+                # [{'timestamp': 13683470, 'type': 'cast', 'sourceID': 21, 'targetID': -1, 'abilityGameID': 41618},...]
+                    for cast in cast_list:
+                        cast.pop('type')
+                        cast.pop('targetID')
+                        cast.pop('sourceID')
+                        cast.pop('sourceMarker','no sourceMarker')
+                        id = cast['abilityGameID']
+                        cast.pop('timestamp')
+                        cast['abilityGameID'] = a_name
+                    aggregate_d[a_name] = aggregate_d[a_name] + len(cast_list)
+                    aggregate_l.append(aggregate_d)
+                    aggregate_dist = [dict(t) for t in {tuple(sorted(d.items())) for d in aggregate_l}]
+                    player_fight_potion_dict[f['name']] = [*player_fight_potion_dict[f['name']],*aggregate_dist]
+            player_potion_dict = {**player_potion_dict, **player_fight_potion_dict}
+        dps_potion_list.append(player_potion_dict)
+        # print(player_potion_dict)
+    df = pd.DataFrame(dps_potion_list) 
+    df.to_csv('elapse_dps_potion.csv', encoding='utf_8_sig') 
 
 
-def _get_player_cast(report_code:str, start:float, end:float, actorID:int) -> list:
+
+def _get_player_cast(report_code:str, start:float, end:float, actorID:int, abilityID:int, client: GraphqlClient) -> list:
     player_cast_list = list()
-    client = gql_client(_get_token(None))
+    
     nextPageTimestamp = start
-    while not nextPageTimestamp:
+    while nextPageTimestamp:
         dps_fight_casts_query = """
             query {
                 reportData {
@@ -405,6 +495,7 @@ def _get_player_cast(report_code:str, start:float, end:float, actorID:int) -> li
                             endTime:%(end)s,
                             dataType:Casts,
                             useActorIDs:false,
+                            abilityID:%(ability)s,
                             sourceID:%(actor)s)
                         {
                             nextPageTimestamp
@@ -413,11 +504,13 @@ def _get_player_cast(report_code:str, start:float, end:float, actorID:int) -> li
                     }
                 }
             }
-        """%{"code":report_code, "start":nextPageTimestamp, "end":end, "actor":actorID}
+        """%{"code":report_code, "start":nextPageTimestamp, "end":end, "actor":actorID, "ability":abilityID}
         player_cast = client.execute(query=dps_fight_casts_query)
-        print(player_cast)
-        cast_data = player_cast['data']['reportData']['report']['events']['data']
-        player_cast_list.append(cast_data)
+        try:
+            cast_data = player_cast['data']['reportData']['report']['events']['data']
+            player_cast_list = [*player_cast_list ,*cast_data]
+        except(KeyError):
+            print("No data found, skip...")
         nextPageTimestamp = player_cast['data']['reportData']['report']['events']['nextPageTimestamp']
     return player_cast_list
 
@@ -455,17 +548,25 @@ if __name__ == '__main__':
         #TODO option2 find report by guild name and title
         print("TODO")
     
+    # Get Client
+    print("[INFO]Initilizing wcl client")
+    client = gql_client(_get_token(None))
+
     # Prepare:
-    get_raid_fight(wcl_report_link)
-    get_rankings(wcl_report_link)
-    get_raid_actor(wcl_report_link)
+    print("[INFO]Getting all fights in given report")
+    get_raid_fight(wcl_report_link, client)
+    print("[INFO]Getting all player ranks in given report")
+    get_rankings(wcl_report_link, client)
+    print("[INFO]Getting all player as actors in given report")
+    get_raid_actor(wcl_report_link, client)
 
     # Usage 1 - Parse + Bracket
-    get_dps_parse_and_bracket(wcl_report_link)
+    print("[INFO]Generating dps player parse and bracket level in csv")
+    get_dps_parse_and_bracket(wcl_report_link, client)
 
     # Usage 2 - DPS Player Potion in all encounter fights
-    
-    get_dps_fight_potion(wcl_report_link)
+    print("[INFO]Generating dps player potion in csv")
+    get_dps_fight_potion(wcl_report_link, client)
 
 
 # Step 5 - Get Player Fight Potion
