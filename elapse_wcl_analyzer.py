@@ -48,7 +48,6 @@ DPS_POTION_CHECK = {
                         41617:"恢复法力",
                         41618:"恢复法力",
                         28499:"恢复法力",
-                        28494:"疯狂力量"
                     }
 # 风暴大蓝，水库大蓝，大蓝
 HEALER_POTION_CHECK = {
@@ -446,12 +445,15 @@ def get_dps_fight_potion(wcl_report_link: str, client: GraphqlClient) -> None:
     for p in GL_FIGHT_DPS_LIST:
         player_potion_dict = dict()
         player_potion_dict['name'] = p
+        print("|-[INFO] Getting {} info...".format(p))
         for f in GL_ALL_KILLS_LIST:
             player_fight_potion_dict = dict()
             player_fight_potion_dict[f['name']] = list()
             aggregate_d = dict()
+            print("|--[INFO] Getting {} info in kills {}...".format(p,f['name']))
             for a_id,a_name in DPS_POTION_CHECK.items():
-                aggregate_d[a_name] = 0 
+                print("|---[INFO] Counting {}:{} ...".format(a_id,a_name))
+                # aggregate_d[a_name] = 0 
                 aggregate_l = list()
                 aggregate_dist = list()
                 sourceID = GL_PLAYER_ACTOR_MAP[p]
@@ -460,7 +462,8 @@ def get_dps_fight_potion(wcl_report_link: str, client: GraphqlClient) -> None:
                 cast_list = _get_player_cast(report_code, int(start), int(end), sourceID, a_id, client)
                 # print("{} - {}".format(p , f['name']))
                 if cast_list:
-                # [{'timestamp': 13683470, 'type': 'cast', 'sourceID': 21, 'targetID': -1, 'abilityGameID': 41618},...]
+                    aggregate_d[a_name] = 0 
+                    # [{'timestamp': 13683470, 'type': 'cast', 'sourceID': 21, 'targetID': -1, 'abilityGameID': 41618},...]
                     for cast in cast_list:
                         cast.pop('type')
                         cast.pop('targetID')
@@ -471,8 +474,11 @@ def get_dps_fight_potion(wcl_report_link: str, client: GraphqlClient) -> None:
                         cast['abilityGameID'] = a_name
                     aggregate_d[a_name] = aggregate_d[a_name] + len(cast_list)
                     aggregate_l.append(aggregate_d)
+                    print(aggregate_l)
                     aggregate_dist = [dict(t) for t in {tuple(sorted(d.items())) for d in aggregate_l}]
                     player_fight_potion_dict[f['name']] = [*player_fight_potion_dict[f['name']],*aggregate_dist]
+                    # print(player_fight_potion_dict[f['name']])
+
             player_potion_dict = {**player_potion_dict, **player_fight_potion_dict}
         dps_potion_list.append(player_potion_dict)
         # print(player_potion_dict)
